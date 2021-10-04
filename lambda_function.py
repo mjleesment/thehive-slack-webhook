@@ -5,16 +5,10 @@ import json
 import logging
 import os
 import time
+import config as cfg
 from base64 import b64decode
-from urllib2 import Request, urlopen, URLError, HTTPError
-
-
-hookURL = os.environ['hookURL']
-slackChannel = os.environ['slackChannel']
-orgName = os.environ['orgName']
-orgIcon = os.environ['orgIcon']
-hiveURL = os.environ['hiveURL']
-caseURL = hiveURL + "/index.html#/case/"
+import requests
+#from urllib2 import Request, urlopen, URLError, HTTPError
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -38,14 +32,14 @@ def process_event(event):
             objectType = "Case"
             caseId = event['object']['caseId']
             fields.append(add_object("Case #",caseId,True))
-            caseLink = caseURL + event['objectId'] + "/details"
+            caseLink = cfg.caseURL + event['objectId'] + "/details"
             titleLink = caseLink
         elif event['objectType'] == "case_task":
             objectType = "Task"
-            titleLink = caseURL + event['rootId'] + "/tasks/" + event['objectId']
+            titleLink = cfg.caseURL + event['rootId'] + "/tasks/" + event['objectId']
         elif event['objectType'] == "case_task_log":
             objectType = "Task Log"
-            titleLink = caseURL + event['rootId'] + "/tasks/" + event['objectId']
+            titleLink = cfg.caseURL + event['rootId'] + "/tasks/" + event['objectId']
         else:
             caseId = "none"
 
@@ -103,7 +97,7 @@ def process_event(event):
             timestamp = int(time.time())
 
         if not titleLink: # if we haven't set it based on object type
-            titleLink = hiveURL
+            titleLink = cfg.hiveURL
 
         activity = "A " + str(objectType) + " has been " + operation + "."
 
@@ -121,8 +115,8 @@ def process_event(event):
                     "title_link": titleLink,
                     "color": "danger",
                     "fields": fields,
-                    "footer": orgName,
-                    "footer_icon": orgIcon,
+                    "footer": cfg.orgName,
+                    "footer_icon": cfg.orgIcon,
                     "ts": timestamp
                 }
             ]
@@ -131,23 +125,26 @@ def process_event(event):
 
 
 def send_to_slack(event,attachments):
-
+    time.sleep(1) # Timeout to avoid HTTP 429, Slack API allows 1 request per second
     slack_message = {
         'username': 'TheHive',
         'icon_emoji': ':honeybee:',
-        'channel': slackChannel,
+        'channel': cfg.slackChannel,
         'attachments': attachments
     }
 
-    req = Request(hookURL, json.dumps(slack_message))
+    #req = Request(cfg.hookURL, json.dumps(slack_message))
     try:
-        response = urlopen(req)
-        response.read()
+        #response = urlopen(req)
+        #response.read()
+        req = requests.post(cfg.hookURL, json={"text":event}, proxies=cfg.PROXY_CONFIG, headers={'Content-type': 'application/json'})
         logger.info("Message posted to %s", slack_message['channel'])
-    except HTTPError as e:
-        logger.error("Request failed: %d %s", e.code, e.reason)
-    except URLError as e:
-        logger.error("Server connection failed: %s", e.reason)
+    #except HTTPError as e:
+    #    logger.error("Request failed: %d %s", e.code, e.reason)
+    #except URLError as e:
+    #    logger.error("Server connection failed: %s", e.reason)
+    except Exception as e:
+        logger.error("Something Went wrong: %s", e)
 
 
 def lambda_handler(event, context):
