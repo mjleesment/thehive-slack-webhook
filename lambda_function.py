@@ -3,35 +3,34 @@
 from __future__ import print_function
 import json
 import logging
-import os
 import time
 import config as cfg
-from base64 import b64decode
 import requests
-#from urllib2 import Request, urlopen, URLError, HTTPError
+from flask import Flask, request
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
+app = Flask(__name__)
 
 def add_object(title,value,short):
-
     object = {"title": title,"value": value,"short": short}
     return object
 
-
 def process_event(event):
-
     logger.info("Processing event: %s", event)
     fields = []
     titleLink = False
+    objectType = ""
+    caseId = None
+    caseLink = ""
+    titleLink = ""
 
     if "Delete" not in event['operation']:
-
         if event['objectType'] == "case":
             objectType = "Case"
             caseId = event['object']['caseId']
-            fields.append(add_object("Case #",caseId,True))
+            fields.append(add_object("Case #", caseId, True))
             caseLink = cfg.caseURL + event['objectId'] + "/details"
             titleLink = caseLink
         elif event['objectType'] == "case_task":
@@ -40,17 +39,22 @@ def process_event(event):
         elif event['objectType'] == "case_task_log":
             objectType = "Task Log"
             titleLink = cfg.caseURL + event['rootId'] + "/tasks/" + event['objectId']
+        elif event['objectType'] == "alert":
+            objectType = "Alert"
+            titleLink = cfg.alertsURL
         else:
             caseId = "none"
 
         if event['operation'] == "Creation":
             operation = "created"
-        elif event['operation'] == "Delete":
-            operation = "deleted"
-        elif event['operation'] == "Update":
-            operation = "updated"
+        #elif event['operation'] == "Delete":
+        #    operation = "deleted"
+        #elif event['operation'] == "Update":
+        #    operation = "updated"
+        #else:
+        #    operation = event['operation']
         else:
-            operation = event['operation']
+            return
 
         if "description" in event['object']:
             description = event['object']['description'] # create/update
@@ -99,27 +103,24 @@ def process_event(event):
         if not titleLink: # if we haven't set it based on object type
             titleLink = cfg.hiveURL
 
-        activity = "A " + str(objectType) + " has been " + operation + "."
+        activity = "TheHive " + str(objectType) + " " + operation + "."
 
         if "title" in event['object']:
             title = event['object']['title']
         else:
             title = activity
 
-        attachments = [
-                {
-                    "fallback": description,
-                    "pretext": activity,
-                    "author_name": (str(updatedBy)),
-                    "title": (str(title)),
-                    "title_link": titleLink,
-                    "color": "danger",
-                    "fields": fields,
-                    "footer": cfg.orgName,
-                    "footer_icon": cfg.orgIcon,
-                    "ts": timestamp
-                }
-            ]
+        attachments = {
+        ":exclamation:": activity,
+        "Owner": (str(updatedBy)),
+        "Title": (str(title)),
+        "Link": titleLink
+        #"color": "danger",
+        #"fields": fields,
+        #"footer": cfg.orgName,
+        #"footer_icon": cfg.orgIcon,
+        #"ts": timestamp
+        }
 
         send_to_slack(event,attachments)
 
@@ -132,21 +133,19 @@ def send_to_slack(event,attachments):
         'channel': cfg.slackChannel,
         'attachments': attachments
     }
+    message=slack_message['icon_emoji']+"\n\n"
+    for key, value in attachments.items():
+        message+=f'{key} : {value}\n\n'
 
-    #req = Request(cfg.hookURL, json.dumps(slack_message))
     try:
-        #response = urlopen(req)
-        #response.read()
-        req = requests.post(cfg.hookURL, json={"text":event}, proxies=cfg.PROXY_CONFIG, headers={'Content-type': 'application/json'})
+        req = requests.post(cfg.hookURL, json={"text":message}, proxies=cfg.PROXY_CONFIG, headers={'Content-type': 'application/json'})
         logger.info("Message posted to %s", slack_message['channel'])
-    #except HTTPError as e:
-    #    logger.error("Request failed: %d %s", e.code, e.reason)
-    #except URLError as e:
-    #    logger.error("Server connection failed: %s", e.reason)
     except Exception as e:
         logger.error("Something Went wrong: %s", e)
 
+@app.route('/webhookLambda', methods=['POST'])
 
-def lambda_handler(event, context):
-    hive_event = json.loads(event['body'])
+def lambda_handler():
+    hive_event = request.get_json()
     process_event(hive_event)
+    return ('Message Sent', 200, None)
